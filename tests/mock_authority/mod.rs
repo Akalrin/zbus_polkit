@@ -9,7 +9,7 @@ use futures_util::future;
 use zbus::{
     connection,
     object_server::{InterfaceRef, SignalEmitter},
-    Connection, Guid, OwnedValue,
+    Connection, Guid, OwnedVariant,
 };
 use zbus_polkit::policykit1::{
     ActionDescription, AuthorityFeatures, AuthorizationResult, CheckAuthorizationFlags,
@@ -62,7 +62,7 @@ impl MockAuthority {
     // it afterwards.
     async fn check_authorization(
         &mut self,
-        subject: (String, HashMap<String, OwnedValue>),
+        subject: (String, HashMap<String, OwnedVariant>),
         _action_id: String,
         _details: HashMap<String, String>,
         _flags: CheckAuthorizationFlags,

@@ -4,7 +4,7 @@ use bitflags::{parser, Flags};
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 use static_assertions::assert_impl_all;
-use zbus::{fdo, Basic, OwnedValue, Type, Value};
+use zbus::{fdo, Basic, OwnedVariant, Type, Variant};
 
 mod subject;
 pub use subject::Subject;
@@ -25,8 +25,8 @@ pub use subject::Subject;
     Serialize,
     Deserialize,
     Type,
-    Value,
-    OwnedValue,
+    Variant,
+    OwnedVariant,
 )]
 pub struct CheckAuthorizationFlags(u32);
 
@@ -92,8 +92,8 @@ assert_impl_all!(ImplicitAuthorization: Send, Sync, Unpin);
     Serialize,
     Deserialize,
     Type,
-    Value,
-    OwnedValue,
+    Variant,
+    OwnedVariant,
 )]
 pub struct AuthorityFeatures(u32);
 
@@ -157,7 +157,7 @@ assert_impl_all!(TemporaryAuthorization: Send, Sync, Unpin);
 pub struct Identity<'a> {
     pub identity_kind: &'a str,
 
-    pub identity_details: &'a HashMap<&'a str, Value<'a>>,
+    pub identity_details: &'a HashMap<&'a str, Variant<'a>>,
 }
 
 assert_impl_all!(Identity<'_>: Send, Sync, Unpin);
@@ -350,7 +350,7 @@ pub trait Authority {
         subject: &Subject,
         locale: &str,
         object_path: &str,
-        options: &std::collections::HashMap<&str, Value<'_>>,
+        options: &std::collections::HashMap<&str, Variant<'_>>,
     ) -> zbus::Result<()>;
 
     /// Revokes all temporary authorizations that applies to `id`.
@@ -456,7 +456,7 @@ mod tests {
             "a{uy}"
         );
         let flags = CheckAuthorizationFlags::ALLOW_USER_INTERACTION;
-        let value = Value::from(HashMap::from([(flags, 1u8)]));
+        let value = Variant::from(HashMap::from([(flags, 1u8)]));
         let dict = <HashMap<CheckAuthorizationFlags, u8>>::try_from(value).unwrap();
         assert_eq!(dict[&flags], 1);
 
@@ -465,25 +465,25 @@ mod tests {
             "a{uy}"
         );
         let features = AuthorityFeatures::TEMPORARY_AUTHORIZATION;
-        let value = Value::from(HashMap::from([(features, 1u8)]));
+        let value = Variant::from(HashMap::from([(features, 1u8)]));
         let dict = <HashMap<AuthorityFeatures, u8>>::try_from(value).unwrap();
         assert_eq!(dict[&features], 1);
     }
 
-    // A `Value` taken out of a received message borrows from the message's buffer.
+    // A `Variant` taken out of a received message borrows from the message's buffer.
     #[test]
     fn flags_convert_from_borrowed_values() {
         let ctxt = Context::new(LE, 0);
 
         let flags = CheckAuthorizationFlags::ALLOW_USER_INTERACTION;
-        let encoded = to_bytes(ctxt, &Value::from(flags)).unwrap();
-        let (value, _): (Value<'_>, _) = encoded.deserialize().unwrap();
+        let encoded = to_bytes(ctxt, &Variant::from(flags)).unwrap();
+        let (value, _): (Variant<'_>, _) = encoded.deserialize().unwrap();
         assert_eq!(CheckAuthorizationFlags::try_from(value).unwrap(), flags);
 
         // Including the bits this crate does not name.
         let features = AuthorityFeatures::from_bits_retain(0b11);
-        let encoded = to_bytes(ctxt, &Value::from(features)).unwrap();
-        let (value, _): (Value<'_>, _) = encoded.deserialize().unwrap();
+        let encoded = to_bytes(ctxt, &Variant::from(features)).unwrap();
+        let (value, _): (Variant<'_>, _) = encoded.deserialize().unwrap();
         assert_eq!(AuthorityFeatures::try_from(value).unwrap(), features);
     }
 
@@ -534,15 +534,15 @@ mod tests {
         assert_eq!(both.bits(), 0b11);
     }
 
-    // The proxy reads `BackendFeatures` as a property, which goes through `OwnedValue`.
+    // The proxy reads `BackendFeatures` as a property, which goes through `OwnedVariant`.
     #[test]
     fn flags_convert_to_and_from_values() {
         let features = AuthorityFeatures::TEMPORARY_AUTHORIZATION;
-        let value = OwnedValue::try_from(Value::from(features)).unwrap();
+        let value = OwnedVariant::try_from(Variant::from(features)).unwrap();
         assert_eq!(value.value_signature().to_string(), "u");
         assert_eq!(AuthorityFeatures::try_from(value).unwrap(), features);
 
-        let value = OwnedValue::try_from(Value::from(AuthorityFeatures::empty())).unwrap();
+        let value = OwnedVariant::try_from(Variant::from(AuthorityFeatures::empty())).unwrap();
         assert_eq!(
             AuthorityFeatures::try_from(value).unwrap(),
             AuthorityFeatures::empty()
@@ -550,13 +550,13 @@ mod tests {
 
         // Bits that this crate does not name are retained on this path too, rather than being an
         // error, which is what used to happen when a newer polkit reported a feature we don't know.
-        let value = OwnedValue::try_from(Value::from(0b11u32)).unwrap();
+        let value = OwnedVariant::try_from(Variant::from(0b11u32)).unwrap();
         let features = AuthorityFeatures::try_from(value).unwrap();
         assert_eq!(features.bits(), 0b11);
         assert!(features.contains(AuthorityFeatures::TEMPORARY_AUTHORIZATION));
 
         let flags = CheckAuthorizationFlags::ALLOW_USER_INTERACTION;
-        let value = OwnedValue::try_from(Value::from(flags)).unwrap();
+        let value = OwnedVariant::try_from(Variant::from(flags)).unwrap();
         assert_eq!(CheckAuthorizationFlags::try_from(value).unwrap(), flags);
     }
 
