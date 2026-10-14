@@ -8,7 +8,7 @@ use std::{collections::HashMap, os::fd::AsFd};
 
 use serde::{Deserialize, Serialize};
 use static_assertions::assert_impl_all;
-use zbus::{names::OwnedUniqueName, OwnedValue, Type};
+use zbus::{names::OwnedUniqueName, OwnedVariant, Type};
 
 use self::{system_bus_name::SystemBusName, unix_process::UnixProcess, unix_session::UnixSession};
 use crate::Error;
@@ -138,7 +138,7 @@ enum Kind {
 #[derive(Debug, Type, Serialize, Deserialize)]
 struct Raw {
     subject_kind: String,
-    subject_details: HashMap<String, OwnedValue>,
+    subject_details: HashMap<String, OwnedVariant>,
 }
 
 const UNIX_PROCESS: &str = "unix-process";
@@ -191,14 +191,14 @@ mod tests {
     use zbus::{
         message::Message,
         wire::{serialized::Context, to_bytes, LE},
-        Value,
+        Variant,
     };
 
     use super::*;
     use crate::policykit1::TemporaryAuthorization;
 
     /// The `(kind, details)` pair `subject` is sent as, read back off the wire.
-    fn sent_as(subject: &Subject) -> (String, HashMap<String, OwnedValue>) {
+    fn sent_as(subject: &Subject) -> (String, HashMap<String, OwnedVariant>) {
         let encoded = to_bytes(Context::new(LE, 0), subject).expect("serialize the subject");
 
         encoded
@@ -210,9 +210,9 @@ mod tests {
     /// A `Subject` decoded from the `(kind, details)` pair an authority would send, if it decodes.
     fn receive<const N: usize>(
         kind: &str,
-        details: [(&str, Value<'_>); N],
+        details: [(&str, Variant<'_>); N],
     ) -> zbus::Result<Subject> {
-        let details: HashMap<String, OwnedValue> = details
+        let details: HashMap<String, OwnedVariant> = details
             .into_iter()
             .map(|(key, value)| (key.to_string(), value.try_into().unwrap()))
             .collect();
@@ -223,7 +223,7 @@ mod tests {
     }
 
     /// A `Subject` decoded from the `(kind, details)` pair an authority would send.
-    fn received_as<const N: usize>(kind: &str, details: [(&str, Value<'_>); N]) -> Subject {
+    fn received_as<const N: usize>(kind: &str, details: [(&str, Variant<'_>); N]) -> Subject {
         receive(kind, details).expect("decode a subject")
     }
 
@@ -254,7 +254,7 @@ mod tests {
         // Sent as any other type it is ignored and polkit falls back to pid+start-time.
         assert_eq!(sent["pidfd"].value_signature().to_string(), "h");
         // polkit refuses a pidfd subject without a uid, and ignores a uid that is not i32.
-        assert_eq!(*sent["uid"], Value::I32(1234));
+        assert_eq!(*sent["uid"], Variant::I32(1234));
     }
 
     #[test]
@@ -266,12 +266,12 @@ mod tests {
         // A pidfd is absent rather than sent as an empty value, so polkit reads the process from
         // the fields below.
         assert_eq!(sent.len(), 3);
-        assert_eq!(*sent["pid"], Value::U32(4242));
-        assert_eq!(*sent["start-time"], Value::U64(1_000_000));
+        assert_eq!(*sent["pid"], Variant::U32(4242));
+        assert_eq!(*sent["start-time"], Variant::U64(1_000_000));
         // polkit reads `uid` as a signed 32-bit integer. Sent as any other type it is silently
         // ignored and polkit falls back to its own racy /proc lookup, which defeats the purpose
         // of passing a UID obtained from a trusted source (see #101).
-        assert_eq!(*sent["uid"], Value::I32(1234));
+        assert_eq!(*sent["uid"], Variant::I32(1234));
     }
 
     #[cfg(target_os = "linux")]
@@ -304,9 +304,9 @@ mod tests {
         let process = received_as(
             "unix-process",
             [
-                ("pid", Value::U32(4242)),
-                ("start-time", Value::U64(7)),
-                ("something-new", Value::from("ignore me")),
+                ("pid", Variant::U32(4242)),
+                ("start-time", Variant::U64(7)),
+                ("something-new", Variant::from("ignore me")),
             ],
         );
         assert_eq!(process.kind(), "unix-process");
@@ -318,14 +318,14 @@ mod tests {
         assert_eq!(details.uid, None);
         assert!(details.pidfd.is_none());
 
-        let session = received_as("unix-session", [("session-id", Value::from("c2"))]);
+        let session = received_as("unix-session", [("session-id", Variant::from("c2"))]);
         assert_eq!(session.kind(), "unix-session");
         let Kind::UnixSession(details) = &session.0 else {
             panic!("expected a unix-session subject, got {session:?}");
         };
         assert_eq!(details.session_id, "c2");
 
-        let bus_name = received_as("system-bus-name", [("name", Value::from(":1.42"))]);
+        let bus_name = received_as("system-bus-name", [("name", Variant::from(":1.42"))]);
         assert_eq!(bus_name.kind(), "system-bus-name");
         let Kind::SystemBusName(details) = &bus_name.0 else {
             panic!("expected a system-bus-name subject, got {bus_name:?}");
@@ -335,18 +335,18 @@ mod tests {
 
     #[test]
     fn subject_keeps_a_kind_it_does_not_know_as_it_arrived() {
-        let subject = received_as("unix-netgroup", [("name", Value::from("engineering"))]);
+        let subject = received_as("unix-netgroup", [("name", Variant::from("engineering"))]);
 
         assert_eq!(subject.kind(), "unix-netgroup");
         let Kind::Other(raw) = &subject.0 else {
             panic!("expected an unknown kind to be kept, got {subject:?}");
         };
-        assert_eq!(*raw.subject_details["name"], Value::from("engineering"));
+        assert_eq!(*raw.subject_details["name"], Variant::from("engineering"));
 
         // And it goes back out as it came in.
         let (kind, sent) = sent_as(&subject);
         assert_eq!(kind, "unix-netgroup");
-        assert_eq!(*sent["name"], Value::from("engineering"));
+        assert_eq!(*sent["name"], Variant::from("engineering"));
     }
 
     // Serde falls back to `Kind::Other` whenever no tagged variant decoded, so a known kind whose
@@ -354,13 +354,13 @@ mod tests {
     // caller still sees the kind, and nothing polkit sent is lost.
     #[test]
     fn subject_keeps_a_known_kind_whose_details_do_not_decode() {
-        let subject = received_as("unix-process", [("pid", Value::from("not a pid"))]);
+        let subject = received_as("unix-process", [("pid", Variant::from("not a pid"))]);
 
         assert_eq!(subject.kind(), "unix-process");
         let Kind::Other(raw) = &subject.0 else {
             panic!("expected the subject to be kept as it arrived, got {subject:?}");
         };
-        assert_eq!(*raw.subject_details["pid"], Value::from("not a pid"));
+        assert_eq!(*raw.subject_details["pid"], Variant::from("not a pid"));
     }
 
     // D-Bus sends the `(kind, details)` pair as a sequence, a self-describing format as a map, and
@@ -369,7 +369,7 @@ mod tests {
     // to. `from_str` hands strings over borrowed and `from_value` owned, so both are tried.
     #[test]
     fn subject_round_trips_through_a_self_describing_format() {
-        let session = received_as("unix-session", [("session-id", Value::from("c2"))]);
+        let session = received_as("unix-session", [("session-id", Variant::from("c2"))]);
         for back in [
             serde_json::from_str::<Subject>(&serde_json::to_string(&session).unwrap()).unwrap(),
             serde_json::from_value::<Subject>(serde_json::to_value(&session).unwrap()).unwrap(),
@@ -419,12 +419,12 @@ mod tests {
         }
     }
 
-    // An unknown kind's details decode as `OwnedValue`s, whose map visitor reads its field names
+    // An unknown kind's details decode as `OwnedVariant`s, whose map visitor reads its field names
     // (`signature` and `value`) borrowed. A borrowed input, `from_str`, decodes them; an owned
     // one, `from_value`, can only do so while there are no details to read.
     #[test]
     fn subject_of_an_unknown_kind_round_trips_through_a_self_describing_format() {
-        let subject = received_as("brand-new-kind", [("k", Value::from("v"))]);
+        let subject = received_as("brand-new-kind", [("k", Variant::from("v"))]);
         let json = serde_json::to_string(&subject).unwrap();
         let back: Subject = serde_json::from_str(&json).unwrap();
 
@@ -432,7 +432,7 @@ mod tests {
         let Kind::Other(raw) = &back.0 else {
             panic!("decoded as a known kind");
         };
-        assert_eq!(*raw.subject_details["k"], Value::from("v"));
+        assert_eq!(*raw.subject_details["k"], Variant::from("v"));
 
         // What `serde_json::to_value` lays the keys out as: the details first.
         let reversed = r#"{"subject_details":{"k":{"signature":"s","value":"v"}},"subject_kind":"brand-new-kind"}"#;
@@ -442,7 +442,7 @@ mod tests {
         let Kind::Other(raw) = &back.0 else {
             panic!("decoded as a known kind");
         };
-        assert_eq!(*raw.subject_details["k"], Value::from("v"));
+        assert_eq!(*raw.subject_details["k"], Variant::from("v"));
 
         let subject = received_as("brand-new-kind", []);
         let back: Subject =
@@ -556,7 +556,7 @@ mod tests {
 
         assert_eq!(kind, "system-bus-name");
         assert_eq!(sent.len(), 1);
-        assert_eq!(*sent["name"], Value::Str(":1.42".into()));
+        assert_eq!(*sent["name"], Variant::Str(":1.42".into()));
     }
 
     #[test]
