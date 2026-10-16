@@ -20,8 +20,7 @@ default = ["zbus/default-rt"]
 tokio = ["zbus/tokio"]
 
 [dependencies]
-# zbus 6 is unreleased; this has to point at git until it is on crates.io.
-zbus = { git = "https://github.com/z-galaxy/zbus", version = "6.0.0", default-features = false, features = [
+zbus = { version = "6.0.0", default-features = false, features = [
     "proxy",
 ] }
 serde = { version = "1.0.200", features = ["derive"] }
@@ -44,8 +43,8 @@ tokio = { version = "1", features = [
     "time",
 ] }
 # The tests stand up an object server over a p2p connection, which the library itself does not
-# need. Same git source as the dependency above.
-zbus = { git = "https://github.com/z-galaxy/zbus", version = "6.0.0", default-features = false, features = [
+# need.
+zbus = { version = "6.0.0", default-features = false, features = [
     "p2p",
     "service",
 ] }
